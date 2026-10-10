@@ -6,6 +6,15 @@ export default defineCommand({
     description: "Start an MCP server",
   },
   subCommands: {
+    control: defineCommand({
+      meta: {
+        name: "control",
+        description: "Start the unified job-control MCP server (for dots/local agents)",
+      },
+      async run() {
+        await import("../control-server.js");
+      },
+    }),
     codex: defineCommand({
       meta: { name: "codex", description: "Start the Codex MCP server (for Claude Code)" },
       async run() {

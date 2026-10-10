@@ -1,7 +1,13 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/cli.ts", "src/codex-server.ts", "src/claude-server.ts"],
+  entry: [
+    "src/cli.ts",
+    "src/codex-server.ts",
+    "src/claude-server.ts",
+    "src/control-server.ts",
+    "src/control-worker.ts",
+  ],
   format: "esm",
   dts: true,
   clean: true,

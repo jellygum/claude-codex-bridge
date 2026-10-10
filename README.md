@@ -1,5 +1,27 @@
 # claude-codex-bridge
 
+## jellygum fork: Windows + dot control
+
+This fork adds Windows executable discovery, independent sessions and background Claude/Codex jobs with start, status, result and cancellation. Existing logins and model settings are retained. The original project is [Dunqing/claude-codex-bridge](https://github.com/Dunqing/claude-codex-bridge).
+
+Install **this fork from source**; the npm commands below refer to the original published package and do not include these additions:
+
+```sh
+git clone https://github.com/jellygum/claude-codex-bridge.git
+cd claude-codex-bridge
+pnpm install --frozen-lockfile
+pnpm build
+node scripts/register-local.mjs
+```
+
+Registration backs up existing settings, installs three local MCP servers plus the `dot-bridge` skill, and uses absolute Node/server paths. Keep the checkout in place. Requires Node >=18 and authenticated Claude/Codex CLIs. Restart local clients to discover tools.
+
+dot needs separate access to your online computer. Use its permitted local task tools if the cloud environment does not expose local MCP. Jobs are independent CLI sessions; existing desktop chats are not attached. See the [Korean dot setup and commands](docs/DOT.md), or run `node dist/cli.mjs control --help`. Read-only is the default; explicitly select `implement` for requested edits. No npm release has been published for this fork.
+
+---
+
+## Original project documentation
+
 [![npm version](https://img.shields.io/npm/v/claude-codex-bridge?color=f97316)](https://www.npmjs.com/package/claude-codex-bridge)
 [![npm downloads](https://img.shields.io/npm/dm/claude-codex-bridge?color=3b82f6)](https://www.npmjs.com/package/claude-codex-bridge)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)

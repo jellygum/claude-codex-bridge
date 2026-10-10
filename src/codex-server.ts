@@ -6,12 +6,15 @@ import { execCommand } from "./lib/exec-runner.js";
 import { parseCodexOutput } from "./lib/codex-output-parser.js";
 import { buildExplainCodePrompt, buildPlanPerfPrompt } from "./lib/prompt-builder.js";
 import { createProgressReporter, logger, type ProgressReporter } from "./lib/logger.js";
-import { CODEX_MODELS } from "./lib/types.js";
 import type { CodexResult } from "./lib/types.js";
 
-let lastThreadId: string | null = null;
-
-const server = new McpServer({ name: "codex-bridge", version: "0.1.0" });
+const server = new McpServer(
+  { name: "codex-bridge", version: "0.3.1-dot.1" },
+  {
+    instructions:
+      "Always pass an absolute project path as workingDirectory. Calls use independent sessions and existing login/model settings. Invoke a peer only for user-requested work; never recursively call the bridge. Implementation tools modify files.",
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,19 +65,11 @@ async function runCodex(
     progress?: ProgressReporter;
   } = {},
 ): Promise<CodexResult> {
-  let args: string[];
-  if (lastThreadId) {
-    // Resume an existing thread — --sandbox is not supported on resume
-    args = ["exec", "resume", lastThreadId, "--json"];
-    if (options.model) args.push("--model", options.model);
-    if (options.fullAuto) args.push("--full-auto");
-  } else {
-    args = ["exec", "--json"];
-    if (options.model) args.push("--model", options.model);
-    if (options.sandbox) args.push("--sandbox", options.sandbox);
-    if (options.fullAuto) args.push("--full-auto");
-  }
-  args.push(prompt);
+  const args = ["exec", "--json"];
+  if (options.model) args.push("--model", options.model);
+  if (options.fullAuto) args.push("--approve-for-me");
+  else if (options.sandbox) args.push("--sandbox", options.sandbox);
+  args.push("--skip-git-repo-check", "--", "-");
 
   options.progress?.report("Starting codex...");
 
@@ -84,6 +79,7 @@ async function runCodex(
   const result = await execCommand({
     command: "codex",
     args,
+    stdin: prompt,
     cwd: options.workingDirectory,
     onStdout: (chunk) => {
       const text = chunk.toString();
@@ -123,8 +119,8 @@ async function runCodex(
   const parsed = parseCodexOutput(result.stdout);
 
   if (parsed.threadId) {
-    lastThreadId = parsed.threadId;
-    logger.debug(`Stored threadId for session continuity: ${parsed.threadId}`);
+    // Each call starts a separate session; never mix projects implicitly.
+    logger.debug(`Created independent thread: ${parsed.threadId}`);
   }
 
   // Check stderr for API key issues
@@ -197,7 +193,7 @@ server.registerTool(
         .string()
         .optional()
         .describe("Working directory (defaults to server cwd)"),
-      model: z.enum(CODEX_MODELS).optional().describe("Override the Codex model"),
+      model: z.string().min(1).optional().describe("Override the Codex model"),
       sandbox: z
         .enum(["read-only", "workspace-write", "danger-full-access"])
         .optional()
@@ -355,7 +351,7 @@ server.registerTool(
     inputSchema: {
       task: z.string().describe("What to implement or fix"),
       workingDirectory: z.string().optional(),
-      model: z.enum(CODEX_MODELS).optional().describe("Override the Codex model"),
+      model: z.string().min(1).optional().describe("Override the Codex model"),
       sandbox: z
         .enum(["workspace-write", "danger-full-access"])
         .optional()

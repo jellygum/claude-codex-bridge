@@ -7,6 +7,7 @@ const main = defineCommand({
     description: "Bidirectional MCP bridge between Claude Code and Codex CLI",
   },
   subCommands: {
+    control: () => import("./commands/control.js").then((r) => r.default),
     serve: () => import("./commands/serve.js").then((r) => r.default),
     setup: () => import("./commands/setup.js").then((r) => r.default),
     install: () => import("./commands/install.js").then((r) => r.default),

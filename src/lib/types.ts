@@ -13,6 +13,8 @@ export interface ExecOptions {
   env?: Record<string, string>;
   timeoutMs?: number;
   maxRetries?: number;
+  signal?: AbortSignal;
+  stdin?: string;
   onStdout?: (chunk: Buffer | string) => void;
   onStderr?: (chunk: Buffer | string) => void;
 }
@@ -22,6 +24,7 @@ export interface ExecResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  cancelled?: boolean;
 }
 
 export interface CodexResult {

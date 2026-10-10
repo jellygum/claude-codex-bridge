@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import consola from "consola";
+import { peerInvocation } from "./cli-paths.js";
 
 export type InstallScope = "global" | "local";
 
@@ -122,10 +123,16 @@ export async function installCodexSkill(scope: InstallScope): Promise<void> {
 
 function exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout: 30_000 }, (error, stdout, stderr) => {
-      if (error) reject(error);
-      else resolve({ stdout, stderr });
-    });
+    const invocation = command === "claude" ? peerInvocation("claude", args) : { command, args };
+    execFile(
+      invocation.command,
+      invocation.args,
+      { timeout: 30_000, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      },
+    );
   });
 }
 
@@ -136,10 +143,8 @@ const CLAUDE_MCP_ARGS = [
   "-s",
   "user",
   "--",
-  "npx",
-  "claude-codex-bridge",
-  "serve",
-  "codex",
+  process.execPath,
+  join(findPkgRoot(), "dist", "codex-server.mjs"),
 ];
 
 export async function setupClaude(): Promise<void> {
@@ -175,8 +180,8 @@ export async function setupClaude(): Promise<void> {
 }
 
 const CODEX_TOML_SECTION = `[mcp_servers.claude]
-command = "npx"
-args = ["claude-codex-bridge", "serve", "claude"]
+command = ${JSON.stringify(process.execPath)}
+args = [${JSON.stringify(join(findPkgRoot(), "dist", "claude-server.mjs"))}]
 tool_timeout_sec = 600
 `;
 
@@ -208,13 +213,15 @@ export async function setupCodex(): Promise<void> {
     // Remove existing section (everything from [mcp_servers.claude] to next section or EOF)
     // Can't use [^[]* because TOML array values contain [ characters
     content = content
-      .replace(/\[mcp_servers\.claude\]\n(?:(?!\[[a-zA-Z]).*\n?)*/g, "")
+      .replace(/^\[mcp_servers\.claude\]\r?\n[\s\S]*?(?=^\[|$(?![\s\S]))/gm, "")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
   }
 
   const separator =
     content.length > 0 && !content.endsWith("\n") ? "\n\n" : content.length > 0 ? "\n" : "";
+  if (existsSync(configPath))
+    await copyFile(configPath, `${configPath}.before-ccb-${Date.now()}.bak`);
   await writeFile(configPath, content + separator + CODEX_TOML_SECTION, "utf-8");
   console.log(
     `  ${content.includes("[mcp_servers.claude]") ? "Updated" : "Added"} [mcp_servers.claude] in ${configPath}`,

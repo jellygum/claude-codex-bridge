@@ -1,7 +1,7 @@
 {
   "name": "claude-codex-bridge",
-  "version": "0.3.1",
-  "description": "Bidirectional MCP server bridge between Claude Code and Codex CLI",
+  "version": "0.3.1-dot.1",
+  "description": "Claude Code / Codex bridge with Windows compatibility and connected dot job control",
   "keywords": [
     "ai",
     "bridge",
@@ -9,15 +9,15 @@
     "codex",
     "mcp"
   ],
-  "homepage": "https://github.com/Dunqing/claude-codex-bridge#readme",
+  "homepage": "https://github.com/jellygum/claude-codex-bridge#readme",
   "bugs": {
-    "url": "https://github.com/Dunqing/claude-codex-bridge/issues"
+    "url": "https://github.com/jellygum/claude-codex-bridge/issues"
   },
   "license": "MIT",
   "author": "Dunqing <dengqing0821@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Dunqing/claude-codex-bridge.git"
+    "url": "git+https://github.com/jellygum/claude-codex-bridge.git"
   },
   "funding": {
     "type": "github",
@@ -26,12 +26,15 @@
   "bin": {
     "ccb-claude": "./dist/claude-server.mjs",
     "ccb-codex": "./dist/codex-server.mjs",
+    "ccb-control": "./dist/control-server.mjs",
     "claude-codex-bridge": "./dist/cli.mjs"
   },
   "files": [
     "dist",
     "agents",
-    "skills"
+    "skills",
+    "scripts",
+    "docs"
   ],
   "type": "module",
   "scripts": {

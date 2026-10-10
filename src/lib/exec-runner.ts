@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { peerInvocation } from "./cli-paths.js";
 import { BridgeError } from "./errors.js";
 import { logger } from "./logger.js";
 import type { ExecOptions, ExecResult } from "./types.js";
@@ -65,6 +66,7 @@ const TRANSIENT_PATTERNS = [
 export function isTransientError(result: ExecResult): boolean {
   if (result.exitCode === 0) return false;
   if (result.timedOut) return false;
+  if (result.cancelled) return false;
   const stderr = result.stderr.toLowerCase();
   return TRANSIENT_PATTERNS.some((pattern) => stderr.includes(pattern));
 }
@@ -90,6 +92,7 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     ...options.env,
     BRIDGE_DEPTH: String(currentDepth + 1),
   };
+  delete env["CLAUDECODE"];
 
   return new Promise((resolve, reject) => {
     logger.debug(
@@ -98,10 +101,15 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
 
     let child;
     try {
-      child = spawn(options.command, options.args, {
+      const invocation =
+        options.command === "claude" || options.command === "codex"
+          ? peerInvocation(options.command, options.args)
+          : { command: options.command, args: options.args };
+      child = spawn(invocation.command, invocation.args, {
         cwd: options.cwd ?? process.cwd(),
         env,
-        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (err) {
       reject(
@@ -116,15 +124,37 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
+    let cancelled = false;
     let settled = false;
+    const stop = () => {
+      if (settled) return;
+      if (process.platform === "win32" && child.pid) {
+        execFile(
+          "taskkill.exe",
+          ["/PID", String(child.pid), "/T", "/F"],
+          { windowsHide: true },
+          () => {
+            if (!settled) child.kill();
+          },
+        );
+      } else child.kill("SIGTERM");
+    };
+    const onAbort = () => {
+      cancelled = true;
+      stop();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
+    child.stdin?.on("error", () => {});
+    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
       if (typeof options.onStdout === "function") {
         options.onStdout(chunk);
       }
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
       if (typeof options.onStderr === "function") {
         options.onStderr(chunk);
@@ -134,7 +164,7 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     const timer = setTimeout(() => {
       timedOut = true;
       logger.warn(`Process timed out after ${timeoutMs}ms, sending SIGTERM`);
-      child.kill("SIGTERM");
+      stop();
       // Force kill after 5 seconds if still alive
       setTimeout(() => {
         if (!settled) {
@@ -146,6 +176,7 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
 
     child.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       settled = true;
       if (err.code === "ENOENT") {
         reject(
@@ -161,12 +192,14 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       settled = true;
       resolve({
         exitCode: code ?? 1,
         stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
         stderr: Buffer.concat(stderrChunks).toString("utf-8"),
         timedOut,
+        cancelled,
       });
     });
   });

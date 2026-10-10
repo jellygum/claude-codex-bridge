@@ -9,9 +9,13 @@ import { createProgressReporter, logger, type ProgressReporter } from "./lib/log
 import { CLAUDE_MODELS } from "./lib/types.js";
 import type { ClaudeResult } from "./lib/types.js";
 
-let lastSessionId: string | null = null;
-
-const server = new McpServer({ name: "claude-bridge", version: "0.1.0" });
+const server = new McpServer(
+  { name: "claude-bridge", version: "0.3.1-dot.1" },
+  {
+    instructions:
+      "Always pass an absolute project path as workingDirectory. Calls use independent sessions and existing login/model settings. Invoke a peer only for user-requested work; never recursively call the bridge. Implementation tools modify files.",
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,12 +28,10 @@ async function runClaude(
     model?: string;
     maxTurns?: number;
     allowedTools?: string[];
-    sessionId?: string;
     progress?: ProgressReporter;
   } = {},
 ): Promise<ClaudeResult> {
   const args = ["-p", "--output-format", "json"];
-  if (options.sessionId) args.push("--resume", options.sessionId);
   if (options.model) args.push("--model", options.model);
   if (options.maxTurns) args.push("--max-turns", String(options.maxTurns));
   if (options.allowedTools && options.allowedTools.length > 0) {
@@ -37,7 +39,6 @@ async function runClaude(
       args.push("--allowedTools", tool);
     }
   }
-  args.push(prompt);
 
   options.progress?.report("Starting claude...");
 
@@ -47,6 +48,7 @@ async function runClaude(
   const result = await execCommand({
     command: "claude",
     args,
+    stdin: prompt,
     cwd: options.workingDirectory,
     onStdout: (chunk) => {
       logger.info(`[claude] ${chunk.toString().replace(/\n$/, "")}`);
@@ -88,8 +90,8 @@ async function runClaude(
   const parsed = parseClaudeOutput(result.stdout);
 
   if (parsed.sessionId) {
-    lastSessionId = parsed.sessionId;
-    logger.debug(`Stored sessionId for session continuity: ${parsed.sessionId}`);
+    // Each call starts a separate session; never mix projects implicitly.
+    logger.debug(`Created independent session: ${parsed.sessionId}`);
   }
 
   // Check stderr for API key issues
@@ -176,7 +178,6 @@ server.registerTool(
       model,
       maxTurns,
       allowedTools,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
@@ -210,7 +211,6 @@ server.registerTool(
       workingDirectory,
       maxTurns,
       allowedTools: READ_ONLY_TOOLS,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
@@ -241,7 +241,6 @@ server.registerTool(
       workingDirectory,
       maxTurns,
       allowedTools: READ_ONLY_TOOLS,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
@@ -275,7 +274,6 @@ server.registerTool(
       workingDirectory,
       maxTurns,
       allowedTools: READ_ONLY_TOOLS,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
@@ -307,7 +305,6 @@ server.registerTool(
       workingDirectory,
       maxTurns,
       allowedTools: READ_ONLY_TOOLS,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
@@ -333,7 +330,6 @@ server.registerTool(
       workingDirectory,
       model,
       maxTurns,
-      sessionId: lastSessionId ?? undefined,
       progress,
     });
     return formatClaudeResponse(parsed);
