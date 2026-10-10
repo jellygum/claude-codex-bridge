@@ -98,7 +98,48 @@ describe("parseCodexOutput", () => {
   it("handles empty output", () => {
     const result = parseCodexOutput("");
     expect(result.agentMessage).toBe("");
-    expect(result.errors).toHaveLength(0);
+    expect(result.errors).toEqual(["Empty output from Codex CLI"]);
+  });
+
+  it.each([
+    [
+      { type: "thread.started", thread_id: "qa" },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 0 } },
+    ],
+    [{ type: "item.completed", item: { type: "agent_message", text: "   " } }],
+    [{ type: "future.metadata", message: "Protocol metadata" }],
+  ])("rejects protocol output without an answer (%j)", (...events) => {
+    const result = parseCodexOutput(events.map((event) => JSON.stringify(event)).join("\n"));
+    expect(result.agentMessage).toBe("");
+    expect(result.errors).toEqual(["No agent answer in Codex CLI output"]);
+  });
+
+  it.each([
+    [{ message: "QA_CODEX_ERROR", code: "quota" }, "QA_CODEX_ERROR"],
+    [{ code: "QA_CODEX_ERROR" }, '{"code":"QA_CODEX_ERROR"}'],
+  ])("returns structured Codex errors as readable strings (%j)", (error, message) => {
+    const result = parseCodexOutput(JSON.stringify({ type: "turn.failed", error }));
+    expect(result.errors).toEqual([message]);
+    expect(result.agentMessage).toBe("");
+  });
+
+  it("preserves an answer when a later agent message is blank", () => {
+    const result = parseCodexOutput(
+      ["Answer", "   "]
+        .map((text) =>
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text },
+          }),
+        )
+        .join("\n"),
+    );
+    expect(result.agentMessage).toBe("Answer");
+    expect(result.errors).toEqual([]);
+  });
+
+  it.each(["null", "42", '{"answer":42}'])("preserves legacy JSON text (%s)", (text) => {
+    expect(parseCodexOutput(text).agentMessage).toBe(text);
   });
 
   it("uses last agent message when multiple exist", () => {

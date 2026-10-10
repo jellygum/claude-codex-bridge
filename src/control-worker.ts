@@ -60,7 +60,9 @@ try {
     job.status = "failed";
     job.error = execution.timedOut
       ? "CLI timed out"
-      : parsed.errors.join("; ") || execution.stderr.slice(-4000) || "CLI failed";
+      : execution.exitCode !== 0 && execution.stderr.trim()
+        ? execution.stderr.slice(-4000)
+        : parsed.errors.join("; ") || execution.stderr.slice(-4000) || "CLI failed";
   } else job.status = "completed";
 } catch (err) {
   job.status = controller.signal.aborted ? "cancelled" : "failed";

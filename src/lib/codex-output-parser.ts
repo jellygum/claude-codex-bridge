@@ -31,6 +31,7 @@ export function parseCodexOutput(jsonlOutput: string): CodexResult {
   };
 
   const lines = jsonlOutput.split("\n").filter((l) => l.trim().length > 0);
+  let hasProtocolEvents = false;
 
   for (const line of lines) {
     let event: Record<string, unknown>;
@@ -41,8 +42,10 @@ export function parseCodexOutput(jsonlOutput: string): CodexResult {
       continue;
     }
 
-    const type = event["type"] as string | undefined;
-    if (!type) continue;
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    const type = event["type"];
+    if (typeof type !== "string" || !type) continue;
+    hasProtocolEvents = true;
 
     switch (type) {
       case "thread.started": {
@@ -56,12 +59,9 @@ export function parseCodexOutput(jsonlOutput: string): CodexResult {
         const itemType = (item?.["type"] as string) ?? (event["itemType"] as string) ?? undefined;
 
         if (itemType === "agent_message" || itemType === "message") {
-          const text =
-            (item?.["text"] as string) ??
-            (event["text"] as string) ??
-            (item?.["content"] as string) ??
-            (event["content"] as string) ??
-            "";
+          const text = [item?.["text"], event["text"], item?.["content"], event["content"]].find(
+            (value): value is string => typeof value === "string" && value.trim().length > 0,
+          );
           if (text) result.agentMessage = text;
         } else if (itemType === "file_change") {
           const path = (item?.["path"] as string) ?? (event["path"] as string) ?? "";
@@ -99,18 +99,32 @@ export function parseCodexOutput(jsonlOutput: string): CodexResult {
 
       case "turn.failed":
       case "error": {
+        const error = event["error"];
+        const message =
+          error && typeof error === "object"
+            ? (error as Record<string, unknown>)["message"]
+            : error;
         const msg =
-          (event["error"] as string) ?? (event["message"] as string) ?? JSON.stringify(event);
+          typeof message === "string" && message.trim()
+            ? message
+            : typeof event["message"] === "string" && event["message"].trim()
+              ? event["message"]
+              : JSON.stringify(error ?? event);
         result.errors.push(msg);
         break;
       }
     }
   }
 
-  // If we found no agent message but have raw output, use it as fallback.
-  // This handles cases where codex outputs plain text instead of JSONL.
-  if (!result.agentMessage && jsonlOutput.trim()) {
+  // Preserve legacy plain text, but never turn protocol metadata into an answer.
+  if (!result.agentMessage && !hasProtocolEvents && jsonlOutput.trim()) {
     result.agentMessage = jsonlOutput.trim();
+  }
+
+  if (!result.agentMessage && result.errors.length === 0) {
+    result.errors.push(
+      jsonlOutput.trim() ? "No agent answer in Codex CLI output" : "Empty output from Codex CLI",
+    );
   }
 
   return result;

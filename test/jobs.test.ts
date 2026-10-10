@@ -24,13 +24,13 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
-function environment(peer: "claude" | "codex" = "codex") {
+function environment(peer: "claude" | "codex" = "codex", stdout?: string) {
   dir = mkdtempSync(join(tmpdir(), "ccb-jobs-"));
   vi.stubEnv("CCB_STATE_DIR", join(dir, "state"));
   const fake = join(dir, "peer.cjs");
   writeFileSync(
     fake,
-    `if(process.argv.includes("--approve-for-me")&&process.argv.includes("--sandbox")){console.error("conflicting sandbox flags");process.exit(2)}let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{if(s==="hang")setInterval(()=>{},1000);else if(s==="fail"){console.error("mock failure");process.exitCode=1}else console.log(JSON.stringify(${peer === "claude" ? '{result:s,session_id:"test"}' : '{type:"item.completed",item:{type:"agent_message",text:s}}'}))})`,
+    `if(process.argv.includes("--approve-for-me")&&process.argv.includes("--sandbox")){console.error("conflicting sandbox flags");process.exit(2)}let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{if(s==="hang")setInterval(()=>{},1000);else if(s==="fail"){console.error("mock failure");process.exitCode=1}else ${stdout !== undefined ? `process.stdout.write(${JSON.stringify(stdout)})` : `console.log(JSON.stringify(${peer === "claude" ? '{result:s,session_id:"test"}' : '{type:"item.completed",item:{type:"agent_message",text:s}}'}))`}})`,
   );
   vi.stubEnv(peer === "claude" ? "CCB_CLAUDE_ENTRYPOINT" : "CCB_CODEX_ENTRYPOINT", fake);
 }
@@ -76,8 +76,95 @@ describe("persistent job control", () => {
   it("reports a failing CLI as failed", async () => {
     environment();
     const job = startJob({ peer: "codex", prompt: "fail", workingDirectory: dir });
-    expect((await untilFinished(job.id)).status).toBe("failed");
+    const failed = await untilFinished(job.id);
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toContain("mock failure");
   });
+  it.each([
+    { peer: "codex", stdout: "", error: "Empty output from Codex CLI" },
+    {
+      peer: "codex",
+      stdout: [
+        JSON.stringify({ type: "thread.started", thread_id: "qa" }),
+        JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 0 } }),
+      ].join("\n"),
+      error: "No agent answer in Codex CLI output",
+    },
+    {
+      peer: "codex",
+      stdout: JSON.stringify({
+        type: "turn.failed",
+        error: { message: "QA_CODEX_ERROR" },
+      }),
+      error: "QA_CODEX_ERROR",
+    },
+    {
+      peer: "claude",
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        errors: ["QA_MAX_TURNS"],
+        result: "",
+      }),
+      error: "QA_MAX_TURNS",
+    },
+    {
+      peer: "claude",
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "",
+      }),
+      error: "No agent answer in Claude CLI output",
+    },
+  ] as const)("persists zero-exit $peer failures ($error)", async ({ peer, stdout, error }) => {
+    environment(peer, stdout);
+    const summary = startJob({ peer, prompt: "parser regression", workingDirectory: dir });
+    const job = await untilFinished(summary.id);
+    expect(job.status).toBe("failed");
+    expect(job.result).toBe("");
+    expect(job.error).toBe(error);
+    const persisted = JSON.parse(readFileSync(join(jobPath(summary.id), "job.json"), "utf8"));
+    expect(persisted).toMatchObject({ status: "failed", result: "", error });
+    expect(listJobs()[0]).toMatchObject({ status: "failed", error });
+  });
+  it.each(["claude", "codex"] as const)(
+    "preserves legacy plain-text %s job answers",
+    async (peer) => {
+      environment(peer, "Legacy answer");
+      const summary = startJob({ peer, prompt: "parser regression", workingDirectory: dir });
+      expect(await untilFinished(summary.id)).toMatchObject({
+        status: "completed",
+        result: "Legacy answer",
+      });
+    },
+  );
+  it.each(["claude", "codex"] as const)(
+    "preserves structured %s answers containing JSON protocol-like text",
+    async (peer) => {
+      const answer = '{"type":"error","message":"This is answer text"}';
+      environment(
+        peer,
+        JSON.stringify(
+          peer === "claude"
+            ? {
+                type: "result",
+                subtype: "success",
+                is_error: false,
+                errors: [],
+                result: answer,
+              }
+            : { type: "item.completed", item: { type: "agent_message", text: answer } },
+        ),
+      );
+      const summary = startJob({ peer, prompt: "parser regression", workingDirectory: dir });
+      expect(await untilFinished(summary.id)).toMatchObject({
+        status: "completed",
+        result: answer,
+      });
+    },
+  );
   it("cancels only the selected running job", async () => {
     environment();
     const selected = startJob({ peer: "codex", prompt: "hang", workingDirectory: dir });
