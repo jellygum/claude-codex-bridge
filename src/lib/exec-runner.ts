@@ -1,4 +1,5 @@
 import { spawn, execFile } from "node:child_process";
+import { delimiter, dirname } from "node:path";
 import { peerInvocation } from "./cli-paths.js";
 import { BridgeError } from "./errors.js";
 import { logger } from "./logger.js";
@@ -75,8 +76,17 @@ function retryDelayMs(attempt: number): number {
   return Math.min(1000 * 2 ** attempt, MAX_RETRY_DELAY_MS);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +94,15 @@ function sleep(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function execOnce(options: ExecOptions): Promise<ExecResult> {
+  if (options.signal?.aborted) {
+    return Promise.resolve({
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      cancelled: true,
+    });
+  }
   const timeoutMs = options.timeoutMs ?? getTimeoutMs();
   const currentDepth = parseInt(process.env["BRIDGE_DEPTH"] ?? "0", 10);
 
@@ -93,6 +112,21 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     BRIDGE_DEPTH: String(currentDepth + 1),
   };
   delete env["CLAUDECODE"];
+  // npm launchers use /usr/bin/env node, even when this bridge was started with
+  // an absolute Node path from a non-login SSH/MCP environment.
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path");
+  const overridePathKey = Object.keys(options.env ?? {}).find(
+    (key) => key.toLowerCase() === "path",
+  );
+  const inheritedPath = overridePathKey
+    ? options.env![overridePathKey]
+    : (env["PATH"] ?? (pathKey ? env[pathKey] : undefined));
+  // Windows can expose Path; duplicate PATH/Path keys make spawn pick one by
+  // lexical order. Normalize once without losing the inherited search path.
+  for (const key of Object.keys(env)) {
+    if (key !== "PATH" && key.toLowerCase() === "path") delete env[key];
+  }
+  env["PATH"] = [inheritedPath, dirname(process.execPath)].filter(Boolean).join(delimiter);
 
   return new Promise((resolve, reject) => {
     logger.debug(
@@ -103,12 +137,14 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     try {
       const invocation =
         options.command === "claude" || options.command === "codex"
-          ? peerInvocation(options.command, options.args)
+          ? peerInvocation(options.command, options.args, env)
           : { command: options.command, args: options.args };
       child = spawn(invocation.command, invocation.args, {
         cwd: options.cwd ?? process.cwd(),
         env,
         windowsHide: true,
+        // Own a separate process group so cancellation also stops CLI subprocesses.
+        detached: process.platform !== "win32",
         stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (err) {
@@ -126,8 +162,17 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
     let timedOut = false;
     let cancelled = false;
     let settled = false;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    const killPosixGroup = (signal: NodeJS.Signals) => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") child.kill(signal);
+      }
+    };
     const stop = () => {
-      if (settled) return;
+      if (settled || forceTimer) return;
       if (process.platform === "win32" && child.pid) {
         execFile(
           "taskkill.exe",
@@ -137,7 +182,12 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
             if (!settled) child.kill();
           },
         );
-      } else child.kill("SIGTERM");
+      } else killPosixGroup("SIGTERM");
+      forceTimer = setTimeout(() => {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else killPosixGroup("SIGKILL");
+      }, 5_000);
+      forceTimer.unref();
     };
     const onAbort = () => {
       cancelled = true;
@@ -165,17 +215,11 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
       timedOut = true;
       logger.warn(`Process timed out after ${timeoutMs}ms, sending SIGTERM`);
       stop();
-      // Force kill after 5 seconds if still alive
-      setTimeout(() => {
-        if (!settled) {
-          logger.warn("Process did not exit after SIGTERM, sending SIGKILL");
-          child.kill("SIGKILL");
-        }
-      }, 5_000);
     }, timeoutMs);
 
     child.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      clearTimeout(forceTimer);
       options.signal?.removeEventListener("abort", onAbort);
       settled = true;
       if (err.code === "ENOENT") {
@@ -192,6 +236,8 @@ function execOnce(options: ExecOptions): Promise<ExecResult> {
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (forceTimer && process.platform !== "win32") killPosixGroup("SIGKILL");
+      clearTimeout(forceTimer);
       options.signal?.removeEventListener("abort", onAbort);
       settled = true;
       resolve({
@@ -222,7 +268,7 @@ export async function execCommand(options: ExecOptions): Promise<ExecResult> {
       logger.warn(
         `Transient error detected (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`,
       );
-      await sleep(delay);
+      await sleep(delay, options.signal);
       continue;
     }
 

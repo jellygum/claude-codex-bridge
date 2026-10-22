@@ -1,12 +1,41 @@
-import { existsSync, readdirSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
-export function resolvePeerExecutable(peer: "claude" | "codex"): string {
-  const override = process.env[peer === "claude" ? "CCB_CLAUDE_EXE" : "CCB_CODEX_EXE"];
+export function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function resolvePeerExecutable(
+  peer: "claude" | "codex",
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env[peer === "claude" ? "CCB_CLAUDE_EXE" : "CCB_CODEX_EXE"];
   if (override) return override;
-  if (process.platform !== "win32") return peer;
-  const home = homedir();
+  const home = env["HOME"] || homedir();
+  if (process.platform !== "win32") {
+    // Non-login SSH/MCP processes do not necessarily source shell startup files.
+    // Honor PATH first, then common per-user/native and active Node installations.
+    const prefix = env["npm_config_prefix"] || env["NPM_CONFIG_PREFIX"];
+    const directories = [
+      ...(env["PATH"] ?? "").split(":"),
+      join(home, ".local", "bin"),
+      join(home, "bin"),
+      ...(prefix ? [join(prefix, "bin")] : []),
+      dirname(process.execPath),
+    ];
+    return (
+      directories
+        .filter((dir) => isAbsolute(dir))
+        .map((dir) => join(dir, peer))
+        .find(isExecutable) ?? peer
+    );
+  }
   const candidates = [join(home, ".local", "bin", `${peer}.exe`)];
   if (peer === "claude") {
     const extensions = join(home, ".vscode", "extensions");
@@ -21,7 +50,7 @@ export function resolvePeerExecutable(peer: "claude" | "codex"): string {
   } else {
     candidates.push(
       join(
-        process.env["LOCALAPPDATA"] ?? join(home, "AppData", "Local"),
+        env["LOCALAPPDATA"] ?? join(home, "AppData", "Local"),
         "Programs",
         "OpenAI",
         "Codex",
@@ -30,18 +59,26 @@ export function resolvePeerExecutable(peer: "claude" | "codex"): string {
       ),
     );
   }
-  candidates.push(...(process.env["PATH"] ?? "").split(";").map((dir) => join(dir, `${peer}.exe`)));
+  candidates.push(
+    ...(env["PATH"] ?? env["Path"] ?? "")
+      .split(";")
+      .filter(Boolean)
+      .map((dir) => join(dir, `${peer}.exe`)),
+  );
   return candidates.find((path) => existsSync(path)) ?? peer;
 }
 
-export function peerInvocation(peer: "claude" | "codex", args: string[]) {
-  const entrypoint =
-    process.env[peer === "claude" ? "CCB_CLAUDE_ENTRYPOINT" : "CCB_CODEX_ENTRYPOINT"];
+export function peerInvocation(
+  peer: "claude" | "codex",
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const entrypoint = env[peer === "claude" ? "CCB_CLAUDE_ENTRYPOINT" : "CCB_CODEX_ENTRYPOINT"];
   if (entrypoint) return { command: process.execPath, args: [entrypoint, ...args] };
-  const command = resolvePeerExecutable(peer);
+  const command = resolvePeerExecutable(peer, env);
   if (command === peer && process.platform === "win32") {
     const npmRoot = join(
-      process.env["APPDATA"] ?? join(homedir(), "AppData", "Roaming"),
+      env["APPDATA"] ?? join(homedir(), "AppData", "Roaming"),
       "npm",
       "node_modules",
     );
@@ -52,4 +89,22 @@ export function peerInvocation(peer: "claude" | "codex", args: string[]) {
     if (existsSync(script)) return { command: process.execPath, args: [script, ...args] };
   }
   return { command, args };
+}
+
+export function peerDiagnostics() {
+  return Object.fromEntries(
+    (["claude", "codex"] as const).map((peer) => {
+      const invocation = peerInvocation(peer, []);
+      return [
+        peer,
+        {
+          ...invocation,
+          available:
+            isAbsolute(invocation.command) &&
+            isExecutable(invocation.command) &&
+            (invocation.args.length === 0 || existsSync(invocation.args[0]!)),
+        },
+      ];
+    }),
+  );
 }

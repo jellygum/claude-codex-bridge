@@ -11,7 +11,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
@@ -36,7 +36,7 @@ export interface Job {
   error?: string;
 }
 export function stateDirectory(): string {
-  return process.env["CCB_STATE_DIR"] ?? join(homedir(), ".claude-codex-bridge", "jobs");
+  return resolve(process.env["CCB_STATE_DIR"] ?? join(homedir(), ".claude-codex-bridge", "jobs"));
 }
 export function jobPath(id: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))

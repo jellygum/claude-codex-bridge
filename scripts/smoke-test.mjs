@@ -20,9 +20,16 @@ try {
       env: { ...process.env, CCB_STATE_DIR: join(root, ".bridge-state", "smoke") },
       stderr: "pipe",
     });
-    transport.stderr?.on("data", () => {});
-    await client.connect(transport);
     clients.push(client);
+    let diagnostics = "";
+    transport.stderr?.on("data", (chunk) => {
+      diagnostics = (diagnostics + chunk).slice(-4000);
+    });
+    try {
+      await client.connect(transport, { timeout: 10000 });
+    } catch (error) {
+      throw new Error(`${peer} MCP initialization failed: ${error.message}\n${diagnostics}`);
+    }
     const tools = await client.listTools();
     assert.equal(tools.tools.length, 6, `${peer} tool count`);
     results.push({ peer, handshake: "PASS", tools: tools.tools.map((t) => t.name) });

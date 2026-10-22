@@ -49,12 +49,14 @@
     "publint": "publint",
     "prepublishOnly": "pnpm build",
     "release": "bumpp",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:offline": "pnpm build && pnpm test && node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "citty": "^0.2.0",
     "consola": "^3.4.2",
+    "toml-eslint-parser": "^0.10.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -70,7 +72,7 @@
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=18"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "packageManager": "pnpm@10.29.2"
 }

@@ -175,3 +175,14 @@ describe("persistent job control", () => {
     expect((await untilFinished(other.id)).status).toBe("completed");
   });
 });
+
+it("keeps a relative state directory stable when the worker changes cwd", async () => {
+  environment();
+  const { relative } = await import("node:path");
+  vi.stubEnv("CCB_STATE_DIR", relative(process.cwd(), join(dir, "state")));
+  const summary = startJob({ peer: "codex", prompt: "relative state", workingDirectory: dir });
+  expect(await untilFinished(summary.id)).toMatchObject({
+    status: "completed",
+    result: "relative state",
+  });
+});
