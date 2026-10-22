@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { cancelJob, jobInput, jobSummary, listJobs, readJob, startJob } from "./lib/jobs.js";
-import { resolvePeerExecutable } from "./lib/cli-paths.js";
+import { peerDiagnostics, resolvePeerExecutable } from "./lib/cli-paths.js";
 
 const server = new McpServer(
   { name: "claude-codex-control", version: "0.3.1-dot.1" },
@@ -83,6 +83,7 @@ server.registerTool(
       claude: resolvePeerExecutable("claude"),
       codex: resolvePeerExecutable("codex"),
       node: process.execPath,
+      peers: peerDiagnostics(),
       dot: "In your dot profile, allow access to this computer. Keep it online with ChatGPT open. Use this MCP server if exposed, otherwise the local control CLI.",
     }),
 );

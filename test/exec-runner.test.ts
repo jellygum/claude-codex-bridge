@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execCommand, isTransientError } from "../src/lib/exec-runner.js";
@@ -41,6 +41,12 @@ describe("execCommand across platforms", () => {
   it("times out a running process", async () => {
     expect((await runNode("setInterval(()=>{},1000)", { timeoutMs: 300 })).timedOut).toBe(true);
   });
+  it("normalizes Windows-style Path overrides without losing their value", async () => {
+    const result = await runNode("console.log(process.env.PATH)", {
+      env: { Path: "custom-search-path" },
+    });
+    expect(result.stdout).toMatch(/^custom-search-path[:;]/);
+  });
   it("cancels the owned child", async () => {
     const controller = new AbortController();
     const execution = runNode("setInterval(()=>{},1000)", {
@@ -55,6 +61,47 @@ describe("execCommand across platforms", () => {
       execCommand({ command: "nonexistent_command_xyz_12345", args: [] }),
     ).rejects.toThrow("not found");
   });
+  it("does not spawn an already cancelled request", async () => {
+    const result = await execCommand({
+      command: "must-not-be-spawned",
+      args: [],
+      signal: AbortSignal.abort(),
+    });
+    expect(result.cancelled).toBe(true);
+  });
+  it("does not restart a CLI when cancelled during retry backoff", async () => {
+    const controller = new AbortController();
+    const execution = runNode('console.error("503"); process.exitCode=1', {
+      signal: controller.signal,
+      maxRetries: 2,
+      onStderr: () => setTimeout(() => controller.abort(), 100),
+    });
+    expect((await execution).cancelled).toBe(true);
+  });
+  it.skipIf(process.platform === "win32")(
+    "kills a TERM-resistant child and its subprocess on cancellation",
+    async () => {
+      const controller = new AbortController();
+      const dir = mkdtempSync(join(tmpdir(), "ccb-process-group-"));
+      const marker = join(dir, "escaped");
+      const descendant = `process.on('SIGTERM',()=>{});setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(marker)},'leak'),6500);setInterval(()=>{},1000)`;
+      const source = `process.on('SIGTERM',()=>{});require('child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit'});console.log('ready');setInterval(()=>{},1000)`;
+      try {
+        const result = await runNode(source, {
+          signal: controller.signal,
+          timeoutMs: 15000,
+          onStdout: () => setTimeout(() => controller.abort(), 200),
+        });
+        expect(result.cancelled).toBe(true);
+        expect(result.timedOut).toBe(false);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    12000,
+  );
   it("retries a transient failure once and succeeds", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ccb-retry-"));
     try {

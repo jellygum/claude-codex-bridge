@@ -1,6 +1,6 @@
 # claude-codex-bridge
 
-## jellygum fork: Windows + dot control
+## jellygum fork: Windows + Ubuntu headless + dot control
 
 This fork adds Windows executable discovery, independent sessions and background Claude/Codex jobs with start, status, result and cancellation. Existing logins and model settings are retained. The original project is [Dunqing/claude-codex-bridge](https://github.com/Dunqing/claude-codex-bridge).
 
@@ -14,18 +14,20 @@ pnpm build
 node scripts/register-local.mjs
 ```
 
-Registration backs up existing settings, installs three local MCP servers plus the `dot-bridge` skill, and uses absolute Node/server paths. Keep the checkout in place. Requires Node >=18 and authenticated Claude/Codex CLIs. Restart local clients to discover tools.
+Registration backs up existing settings, installs three local MCP servers plus the `dot-bridge` skill, and uses absolute Node/server paths. Keep the checkout in place. Source builds require Node ^20.19.0 or >=22.12.0 (Node 22.12+ or 24 recommended), pnpm 10.29.2, and authenticated Claude/Codex CLIs for live calls. Offline tests do not require either CLI. Restart local clients to discover tools.
 
 dot needs separate access to your online computer. Use its permitted local task tools if the cloud environment does not expose local MCP. Jobs are independent CLI sessions; existing desktop chats are not attached. See the [Korean dot setup and commands](docs/DOT.md), or run `node dist/cli.mjs control --help`. Read-only is the default; explicitly select `implement` for requested edits. No npm release has been published for this fork.
 
 ---
+
+Ubuntu/SSH: see the [Korean headless installation and validation guide](docs/UBUNTU.md). Run `pnpm test:offline` for build, mock CLI tests and MCP initialization; preview registration with `node scripts/register-local.mjs --dry-run`.
 
 ## Original project documentation
 
 [![npm version](https://img.shields.io/npm/v/claude-codex-bridge?color=f97316)](https://www.npmjs.com/package/claude-codex-bridge)
 [![npm downloads](https://img.shields.io/npm/dm/claude-codex-bridge?color=3b82f6)](https://www.npmjs.com/package/claude-codex-bridge)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen)](https://nodejs.org)
 
 Bidirectional [MCP](https://modelcontextprotocol.io/) server bridge between **Claude Code** and **OpenAI Codex CLI**.
 
@@ -43,7 +45,7 @@ Let Claude and Codex work as partners — each can ask the other for help, revie
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) — installed and authenticated
 - [Codex CLI](https://developers.openai.com/codex/cli/) — installed and authenticated
-- [Node.js](https://nodejs.org) >= 18
+- [Node.js](https://nodejs.org) ^20.19.0 or >=22.12.0 (22.12+ or 24 recommended for this fork)
 
 ## Quick Start
 

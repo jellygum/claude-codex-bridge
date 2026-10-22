@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { readFileSync } from "node:fs";
 import { cancelJob, jobSummary, listJobs, readJob, startJob } from "../lib/jobs.js";
-import { resolvePeerExecutable } from "../lib/cli-paths.js";
+import { peerDiagnostics, resolvePeerExecutable } from "../lib/cli-paths.js";
 
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const jobArgs = {
@@ -72,6 +72,7 @@ export default defineCommand({
           claude: resolvePeerExecutable("claude"),
           codex: resolvePeerExecutable("codex"),
           node: process.execPath,
+          peers: peerDiagnostics(),
           dot: "Requires separately granted local computer access in the dot profile.",
         });
       },
